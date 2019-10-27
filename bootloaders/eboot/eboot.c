@@ -15,6 +15,29 @@
 
 #define SWRST do { (*((volatile uint32_t*) 0x60000700)) |= 0x80000000; } while(0);
 
+#define ESP8266_REG(addr) *((volatile uint32_t *)(0x60000000+(addr)))
+//GPIO 16 Control Registers
+#define GP16O  ESP8266_REG(0x768)
+#define GP16E  ESP8266_REG(0x774)
+#define GP16I  ESP8266_REG(0x78C)
+
+//GPIO 16 PIN Control Register
+#define GP16C  ESP8266_REG(0x790)
+#define GPC16  GP16C
+
+//GPIO 16 PIN Function Register
+#define GP16F  ESP8266_REG(0x7A0)
+#define GPF16  GP16F
+
+//GPIO 16 PIN Function Bits
+#define GP16FFS0 0 //Function Select bit 0
+#define GP16FFS1 1 //Function Select bit 1
+#define GP16FPD  3 //Pulldown
+#define GP16FSPD 5 //Sleep Pulldown
+#define GP16FFS2 6 //Function Select bit 2
+#define GP16FFS(f) (((f) & 0x03) | (((f) & 0x04) << 4))
+#define GPFFS_GPIO(p) (((p)==0||(p)==2||(p)==4||(p)==5)?0:((p)==16)?1:3)
+
 extern void ets_wdt_enable(void);
 extern void ets_wdt_disable(void);
 
@@ -87,7 +110,18 @@ int load_app_from_flash_raw(const uint32_t flash_addr)
     return 0;
 }
 
+void prepare_wd()
+{
+    GPF16 = GP16FFS(GPFFS_GPIO(16));//Set mode to GPIO
+    GPC16 = 0;
+    GP16E |= 1;
+    return;
+}
 
+void toggle_wd()
+{
+    GP16O = GP16O ^ 1;
+}
 
 int copy_raw(const uint32_t src_addr,
              const uint32_t dst_addr,
@@ -104,14 +138,17 @@ int copy_raw(const uint32_t src_addr,
     uint32_t left = ((size+buffer_size-1) & ~(buffer_size-1));
     uint32_t saddr = src_addr;
     uint32_t daddr = dst_addr;
-
+    prepare_wd();
     while (left) {
+        toggle_wd();
         if (SPIEraseSector(daddr/buffer_size)) {
             return 2;
         }
+        toggle_wd();
         if (SPIRead(saddr, buffer, buffer_size)) {
             return 3;
         }
+        toggle_wd();
         if (SPIWrite(daddr, buffer, buffer_size)) {
             return 4;
         }
@@ -123,13 +160,11 @@ int copy_raw(const uint32_t src_addr,
     return 0;
 }
 
-
-
 void main()
 {
     int res = 9;
     struct eboot_command cmd;
-    
+
     print_version(0);
 
     if (eboot_command_read(&cmd) == 0) {
